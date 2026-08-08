@@ -1,0 +1,19 @@
+Provider error: Exception - API failure
+Traceback (most recent call last):
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\routers\interview.py", line 68, in interview
+    first_question = orchestrator.start(orch_state)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\orchestrator.py", line 100, in start
+    decision = self._planner.decide(
+        candidate=state.candidate,
+    ...<3 lines>...
+        question_number=0,
+    )
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 131, in decide
+    nq = self._plan(candidate, state, history, last_eval)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 232, in _plan
+    return self._llm.generate_structured(messages, NextQuestion)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\tests\test_llm.py", line 83, in generate_structured
+    raise Exception("API failure")
+Exception: API failure
+
