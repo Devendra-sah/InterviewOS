@@ -5,7 +5,12 @@ Designed to be swapped for Redis/DB in later tasks.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
 from app.schemas.candidate import CandidateRecord
+
+if TYPE_CHECKING:
+    from app.agents.orchestrator import OrchestratorState
 
 
 @dataclass
@@ -15,6 +20,8 @@ class SessionState:
     history: list[dict] = field(default_factory=list)   # [{role, content}]
     done: bool = False
     turn_count: int = 0
+    # Orchestrator state – None when orchestrator is not yet wired in
+    orchestrator_state: "OrchestratorState | None" = None
 
 
 # Module-level dict – replace with a proper store in production

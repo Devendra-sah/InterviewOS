@@ -1,0 +1,38 @@
+Provider error: AuthenticationError - Error code: 401 - {'error': {'message': 'Invalid API Key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}}
+Traceback (most recent call last):
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\routers\interview.py", line 68, in interview
+    first_question = orchestrator.start(orch_state)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\orchestrator.py", line 100, in start
+    decision = self._planner.decide(
+        candidate=state.candidate,
+    ...<3 lines>...
+        question_number=0,
+    )
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 131, in decide
+    nq = self._plan(candidate, state, history, last_eval)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 232, in _plan
+    return self._llm.generate_structured(messages, NextQuestion)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\services\llm.py", line 140, in generate_structured
+    raw = self.generate(augmented, response_format={"type": "json_object"}, **kwargs)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\services\llm.py", line 120, in generate
+    resp = self._client.chat.completions.create(
+        model=self._model, messages=messages, **kwargs
+    )
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\.venv\Lib\site-packages\groq\resources\chat\completions.py", line 462, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/openai/v1/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<45 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\.venv\Lib\site-packages\groq\_base_client.py", line 1284, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\.venv\Lib\site-packages\groq\_base_client.py", line 1071, in request
+    raise self._make_status_error_from_response(err.response) from None
+groq.AuthenticationError: Error code: 401 - {'error': {'message': 'Invalid API Key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}}
+

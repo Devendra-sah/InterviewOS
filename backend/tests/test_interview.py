@@ -8,6 +8,12 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import session_store
+from app.services.llm import FakeLLMProvider
+from app.routers.interview import set_provider, reset_provider
+from app.schemas.intelligence import (
+    AnswerEvaluation, NextQuestion,
+)
+from app.schemas.interview import FeedbackPayload
 
 client = TestClient(app)
 
@@ -28,12 +34,54 @@ CANDIDATE = {
 }
 
 
+def _make_eval(**kw) -> AnswerEvaluation:
+    defaults = dict(score=8.0, correctness=8.0, depth=8.0, reasoning="ok",
+                    strengths=[], weaknesses=[], missing_concepts=[],
+                    follow_up_needed=False,
+                    recommended_strategy="baseline", recommended_difficulty="medium")
+    defaults.update(kw)
+    return AnswerEvaluation(**defaults)
+
+
+def _make_nq(day: int = 7) -> NextQuestion:
+    return NextQuestion(question="Q?", curriculum_day=day, topic="T",
+                        strategy="baseline", difficulty="medium", rationale="r")
+
+
+def _make_feedback() -> FeedbackPayload:
+    return FeedbackPayload(
+        summary="Good job.", strengths=["s"], gaps=["g"], next=["n"]
+    )
+
+
+class _CycleFakeLLM(FakeLLMProvider):
+    """Cycles through different days so coverage grows."""
+    _DAYS = [7, 8, 10, 12, 16, 22, 28, 31, 7, 8, 10, 12]
+    def __init__(self):
+        super().__init__()
+        self._idx = 0
+    def generate(self, messages, **kw):
+        return "What is your approach to vector search?"
+    def generate_structured(self, messages, schema, **kw):
+        if schema is AnswerEvaluation:
+            return _make_eval()
+        if schema is NextQuestion:
+            day = self._DAYS[self._idx % len(self._DAYS)]
+            self._idx += 1
+            return _make_nq(day)
+        if schema is FeedbackPayload:
+            return _make_feedback()
+        return schema.model_validate({})
+
+
 @pytest.fixture(autouse=True)
 def clear_sessions():
     """Wipe sessions before each test so tests are isolated."""
     session_store.clear_all()
+    set_provider(_CycleFakeLLM())
     yield
     session_store.clear_all()
+    reset_provider()
 
 
 # ── 1. Init turn ──────────────────────────────────────────────────────────────
@@ -95,8 +143,11 @@ class TestFollowUpTurn:
 class TestEndInterview:
     def _drive_to_end(self, sid="end-sess"):
         client.post("/api/interview", json={"sessionId": sid, "candidate": CANDIDATE})
-        for i in range(5):   # _MAX_TURNS = 5
+        resp = None
+        for i in range(15):   # up to 15 turns to reach completion
             resp = client.post("/api/interview", json={"sessionId": sid, "message": f"msg {i}"})
+            if resp.json().get("done"):
+                break
         return resp
 
     def test_final_done_is_true(self):
