@@ -83,7 +83,36 @@ Rules:
 - Must eventually cover at least 4 distinct curriculum days.
 - Use only curriculum days provided in the context.
 - Consider relevant memories from the candidate's interview history.
+- If the candidate made a concrete technical claim, ask about that claim
+    before moving to a new curriculum topic.
+- Do not ask a generic follow-up just to satisfy a follow-up quota.
+- Use candidate names sparingly and only when it reads naturally.
+- Vary openings naturally: direct, probe, challenge, scenario,
+    trade-off, clarification, transition, or deepening.
 """
+
+
+_FOLLOW_UP_MARKERS = (
+        "because",
+        "trade-off",
+        "tradeoff",
+        "when",
+        "if ",
+        "however",
+        "instead",
+        "hybrid",
+        "balance",
+        "decide",
+        "prefer",
+        "compare",
+        "choose",
+        "fine-tune",
+        "construct",
+        "evaluate",
+        "overfit",
+        "rare",
+        "specific",
+)
 
 
 def _next_uncovered_day(
@@ -166,22 +195,95 @@ class Planner:
         state: CompetencyState,
         last_eval: AnswerEvaluation | None,
         force_end: bool,
+        last_answer: str | None = None,
+        memories: Optional[List[MemoryResult]] = None,
     ) -> Strategy:
         if force_end:
             return "synthesis"
         if last_eval is None:
             return "baseline"
-        # Break infinite weakness-probe loops first
+
+        answer_text = (last_answer or "").lower()
+        memory_text = " ".join(m.fact for m in memories or ()).lower()
+        has_specific_signal = (
+            len((last_answer or "").split()) >= 12
+            and any(marker in answer_text for marker in _FOLLOW_UP_MARKERS)
+        ) or any(marker in memory_text for marker in ("hybrid", "bm25", "rare", "trade-off", "compare"))
+
+        # Break repeated weakness-probe loops before asking yet another probe.
         if last_eval.score < 5.0 and state.consecutive_weak >= 3:
             return "conceptual_probe"
-        # Honour evaluator's recommendation when a follow-up is needed
+
+        # Follow the evaluator when it explicitly asks for a follow-up.
         if last_eval.follow_up_needed:
             return last_eval.recommended_strategy
+
+        # Strong and medium answers can still deserve a targeted follow-up if
+        # they contain a concrete technical decision, trade-off, or claim.
+        if last_eval.score >= 7.0:
+            if has_specific_signal:
+                if any(marker in answer_text for marker in ("trade-off", "tradeoff", "compare", "balance", "prefer", "choose")):
+                    return "tradeoff"
+                if any(marker in answer_text for marker in ("scale", "production", "deploy", "latency", "throughput")):
+                    return "scenario"
+                if any(marker in answer_text for marker in ("architecture", "system", "design", "pipeline")):
+                    return "architecture_probe"
+                return "clarification"
+            if state.consecutive_strong >= 2:
+                return "scenario"
+            return "conceptual_probe"
+
+        if last_eval.score >= 5.0:
+            if has_specific_signal:
+                if any(marker in answer_text for marker in ("trade-off", "tradeoff", "compare", "balance", "prefer", "choose")):
+                    return "tradeoff"
+                return "clarification"
+            return "conceptual_probe"
+
+        # Weak answer: probe once, but do not keep hammering the same weakness.
+        if state.consecutive_weak >= 2:
+            return "conceptual_probe"
+        return "weakness_probe"
+
+    @staticmethod
+    def _should_follow_up(
+        state: CompetencyState,
+        history: List[InterviewTurn],
+        last_eval: AnswerEvaluation,
+        last_answer: str,
+        memories: Optional[List[MemoryResult]] = None,
+    ) -> bool:
+        if not history:
+            return False
+
+        current_day = history[-1].curriculum_day
+        same_day_turns = sum(1 for turn in history if turn.curriculum_day == current_day)
+
+        # Keep at most one follow-up per curriculum day so coverage keeps moving.
+        if same_day_turns >= 2:
+            return False
+
         if last_eval.score < 5.0:
-            return "weakness_probe"
-        if last_eval.score >= 7.5:
-            return "architecture_probe" if state.current_difficulty == "hard" else "scenario"
-        return "conceptual_probe"
+            return state.consecutive_weak < 3 and (
+                last_eval.follow_up_needed
+                or bool(last_eval.weaknesses)
+                or bool(last_eval.missing_concepts)
+            )
+
+        if last_eval.follow_up_needed:
+            return True
+
+        answer_text = last_answer.lower()
+        memory_text = " ".join(m.fact for m in memories or ()).lower()
+        specific_signal = (
+            len(last_answer.split()) >= 12
+            and any(marker in answer_text for marker in _FOLLOW_UP_MARKERS)
+        ) or any(marker in memory_text for marker in ("hybrid", "bm25", "rare", "trade-off", "compare"))
+
+        if last_eval.score >= 7.0:
+            return specific_signal
+
+        return specific_signal or bool(last_eval.weaknesses) or bool(last_eval.missing_concepts)
 
     # ── LLM call ─────────────────────────────────────────────────────────────
 
@@ -196,13 +298,20 @@ class Planner:
     ) -> NextQuestion:
         # Pick next curriculum day
         candidate_days = sorted({m.day for m in candidate.missions})
+        last_answer = history[-1].answer if history else ""
         target_day = _next_uncovered_day(candidate, state.covered_days, candidate_days)
 
         # Allow follow-ups on the same day when appropriate
-        if last_eval and last_eval.follow_up_needed and history:
+        if last_eval and self._should_follow_up(state, history, last_eval, last_answer, memories):
             target_day = history[-1].curriculum_day
 
-        strategy = self._pick_strategy(state, last_eval, force_end)
+        strategy = self._pick_strategy(
+            state,
+            last_eval,
+            force_end,
+            last_answer=last_answer,
+            memories=memories,
+        )
         difficulty = (
             self._update_difficulty(state, last_eval)
             if last_eval
@@ -214,6 +323,16 @@ class Planner:
             f"- [Day {t.curriculum_day}] {t.question}" for t in history
         )
         weaknesses = "\n".join(f"- {w}" for w in state.weaknesses) or "none yet"
+        last_evaluation = "none yet"
+        if last_eval is not None:
+            last_evaluation = (
+                f"score={last_eval.score:.1f}, follow_up_needed={last_eval.follow_up_needed}, "
+                f"strategy={last_eval.recommended_strategy}, difficulty={last_eval.recommended_difficulty}, "
+                f"strengths={last_eval.strengths}, weaknesses={last_eval.weaknesses}, "
+                f"missing_concepts={last_eval.missing_concepts}, reasoning={last_eval.reasoning}"
+            )
+
+        last_answer_text = last_answer[:350] if last_answer else "none yet"
 
         # Format memories for the prompt
         memories_text = ""
@@ -233,12 +352,19 @@ class Planner:
             f"{candidate.member.yearsExperience} yrs exp\n\n"
             f"## Target Curriculum Day\n{day_context}\n\n"
             f"## Questions Already Asked\n{asked_questions or 'none yet'}\n\n"
+            f"## Last Candidate Answer\n{last_answer_text}\n\n"
+            f"## Last Evaluation Signals\n{last_evaluation}\n\n"
             f"## Known Weaknesses\n{weaknesses}\n\n"
             f"## Current State\n"
             f"Difficulty: {difficulty}, Strategy: {strategy}\n"
             f"Covered days: {state.covered_days}\n"
             f"Question #{len(history) + 1}"
             f"{memories_text}\n\n"
+            "## Decision Policy\n"
+            "- If the candidate made a concrete claim, probe that claim directly.\n"
+            "- If the answer was weak, ask one targeted corrective follow-up.\n"
+            "- If the current topic has already been explored, move to a new curriculum day.\n"
+            "- Avoid generic filler questions that do not respond to the answer.\n\n"
             f"Generate the next interview question."
         )
 

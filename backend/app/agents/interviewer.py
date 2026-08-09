@@ -34,6 +34,13 @@ Rules:
 - It must avoid generic phrasing like "Explain X" or "What is X?".
 - It must be technically rigorous but conversational in tone.
 - Do NOT include any preamble, greeting, or explanation.
+- Do not prepend the candidate's name to every question.
+- Use the candidate name only when it sounds natural, usually near the
+    beginning of the interview or as an occasional acknowledgment.
+- Prefer natural openings such as direct, probe, challenge, scenario,
+    trade-off, clarification, transition, or deepening.
+- If the prompt is a follow-up, anchor it to the concrete claim in the
+    prior answer rather than restating the curriculum topic.
 - Return ONLY the question text, nothing else.
 """
 
@@ -59,6 +66,7 @@ class Interviewer:
             if m.day == decision.curriculum_day
         ) or "no specific mission on this day"
         last_q = history[-1].question if history else "none yet"
+        last_a = history[-1].answer if history else "none yet"
 
         user_content = (
             f"## Question spec\n"
@@ -71,6 +79,7 @@ class Interviewer:
             f"{candidate.member.yearsExperience} yrs exp\n"
             f"Candidate's work on this day: {missions_ctx}\n\n"
             f"## Previous question asked\n{last_q}\n\n"
+            f"## Previous candidate answer\n{last_a}\n\n"
             "Now write the final, polished interview question."
         )
 

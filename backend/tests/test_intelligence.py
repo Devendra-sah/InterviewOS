@@ -19,6 +19,7 @@ from app.services import session_store
 from app.services.llm import FakeLLMProvider, LLMProvider
 from app.services.memory import (
     FakeMemoryProvider,
+    MemoryResult,
     get_memory_provider,
     reset_memory_provider,
     set_memory_provider,
@@ -157,6 +158,70 @@ class SmartFakeLLM(LLMProvider):
         if schema is FeedbackPayload:
             return _feedback()
         # Fallback: try to build from schema defaults (will fail for required fields)
+        return schema.model_validate({})
+
+
+def _extract_section(prompt: str, heading: str) -> str:
+    marker = f"## {heading}\n"
+    if marker not in prompt:
+        return ""
+    tail = prompt.split(marker, 1)[1]
+    return tail.split("\n\n## ", 1)[0].strip()
+
+
+class PromptSensitiveLLM(LLMProvider):
+    """Deterministic fake that reacts to planner/interviewer prompt content."""
+
+    def __init__(self, eval_result: AnswerEvaluation):
+        self.eval_result = eval_result
+        self.planner_prompts: list[str] = []
+        self.interviewer_prompts: list[str] = []
+        self.feedback_prompts: list[str] = []
+
+    def generate(self, messages, **kwargs):
+        prompt = messages[-1]["content"]
+        self.interviewer_prompts.append(prompt)
+        base_question = ""
+        if "Base question:" in prompt:
+            base_question = prompt.split("Base question:", 1)[1].split("\n", 1)[0].strip()
+        return base_question or "How would you approach that?"
+
+    def generate_structured(self, messages, schema, **kwargs):
+        prompt = messages[-1]["content"]
+        if schema is AnswerEvaluation:
+            return self.eval_result
+        if schema is NextQuestion:
+            self.planner_prompts.append(prompt)
+            prompt_lower = prompt.lower()
+            if "bm25" in prompt_lower and (
+                "rare medical terms" in prompt_lower
+                or "combine embeddings" in prompt_lower
+                or "semantic representations" in prompt_lower
+                or "hybrid retrieval" in prompt_lower
+            ):
+                question = "How would you decide when the lexical result should outweigh the semantic result?"
+                topic = "Hybrid retrieval trade-offs"
+                strategy = "tradeoff"
+                day = 8
+            elif "fine-tune" in prompt_lower:
+                question = "How would you construct those training pairs, and how would you avoid overfitting to rare conditions?"
+                topic = "Fine-tuning data"
+                strategy = "clarification"
+                day = 10
+            elif self.eval_result.score < 5.0:
+                question = "What specifically makes that approach fail, and what would you change first?"
+                topic = "Weakness probe"
+                strategy = "weakness_probe"
+                day = 12
+            else:
+                question = "How would you validate that decision in practice?"
+                topic = "Technical decision"
+                strategy = "clarification"
+                day = 16
+            return _next_question(day=day, topic=topic, question=question, strategy=strategy)
+        if schema is FeedbackPayload:
+            self.feedback_prompts.append(prompt)
+            return _feedback()
         return schema.model_validate({})
 
 
@@ -499,3 +564,149 @@ class TestAPIContractCompat:
                 break
         resp = client.post("/api/interview", json={"sessionId": "end-sess", "message": "extra"})
         assert resp.status_code == 410
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. Follow-up quality, memory grounding, and final feedback evidence
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestFollowUpQuality:
+    def test_strong_answer_triggers_specific_follow_up(self):
+        llm = PromptSensitiveLLM(eval_result=_strong_eval())
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
+        state = OrchestratorState(candidate=CANDIDATE)
+        orch.start(state)
+
+        reply, done, feedback = orch.next_turn(
+            state,
+            "I would combine embeddings with BM25 because rare medical terms may not have strong semantic representations.",
+        )
+
+        assert done is False
+        assert feedback is None
+        assert "lexical result should outweigh the semantic result" in reply
+        assert "rare medical terms" in llm.planner_prompts[-1].lower()
+        assert "bm25" in llm.planner_prompts[-1].lower()
+
+    def test_weak_answer_triggers_targeted_probe(self):
+        weak_eval = _weak_eval(
+            follow_up_needed=True,
+            weaknesses=["No justification for the retrieval choice"],
+            missing_concepts=["trade-offs"],
+            recommended_strategy="clarification",
+        )
+        llm = PromptSensitiveLLM(eval_result=weak_eval)
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
+        state = OrchestratorState(candidate=CANDIDATE)
+        orch.start(state)
+
+        reply, done, feedback = orch.next_turn(state, "I don't know.")
+
+        assert done is False
+        assert feedback is None
+        assert "what specifically makes that approach fail" in reply.lower()
+        assert "what would you change first" in reply.lower()
+        assert "weakness" in llm.planner_prompts[-1].lower()
+
+    def test_follow_up_references_previous_answer_claim(self):
+        llm = PromptSensitiveLLM(eval_result=_strong_eval())
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
+        state = OrchestratorState(candidate=CANDIDATE)
+        orch.start(state)
+
+        reply, done, feedback = orch.next_turn(
+            state,
+            "I’d fine-tune the embedding model using clinical query-document pairs.",
+        )
+
+        assert done is False
+        assert feedback is None
+        assert "training pairs" in reply.lower()
+        assert "overfitting" in reply.lower()
+        assert "fine-tune" in llm.planner_prompts[-1].lower()
+
+    def test_candidate_name_not_required_every_question(self):
+        llm = PromptSensitiveLLM(eval_result=_strong_eval())
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
+        state = OrchestratorState(candidate=CANDIDATE)
+        orch.start(state)
+
+        reply, done, feedback = orch.next_turn(
+            state,
+            "I would use hybrid retrieval because BM25 can help with rare medical terms.",
+        )
+
+        assert done is False
+        assert feedback is None
+        assert not reply.startswith("Sarah,")
+        assert "Sarah" not in reply[:12]
+
+
+class TestMemoryAndCoverage:
+    def test_memory_context_is_available_to_planner(self):
+        memory = FakeMemoryProvider()
+        memory.set_recall_results(
+            [
+                MemoryResult(
+                    fact="Candidate previously implemented hybrid retrieval using BM25 and embeddings.",
+                    source_node="node-1",
+                    target_node="node-2",
+                    name="hybrid-retrieval",
+                    optional_intent_meta=None,
+                )
+            ]
+        )
+        llm = PromptSensitiveLLM(eval_result=_strong_eval())
+        orch = Orchestrator(llm, memory_provider=memory)
+        state = OrchestratorState(candidate=CANDIDATE)
+        orch.start(state)
+
+        reply, done, feedback = orch.next_turn(
+            state,
+            "I would combine embeddings with BM25 because rare medical terms may not have strong semantic representations.",
+        )
+
+        assert done is False
+        assert feedback is None
+        assert "hybrid retrieval using bm25 and embeddings" in llm.planner_prompts[-1].lower()
+        assert "lexical result should outweigh the semantic result" in reply
+
+    def test_interview_reaches_eight_questions_and_four_days(self):
+        llm = SmartFakeLLM(day_sequence=[7, 8, 10, 12, 16, 22, 28, 31, 7, 8, 10, 12])
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
+        state = OrchestratorState(candidate=CANDIDATE)
+        orch.start(state)
+
+        for i in range(12):
+            if state.done:
+                break
+            orch.next_turn(state, f"Answer {i}")
+
+        assert state.done is True
+        assert state.question_count >= 8
+        assert len(set(state.competency.covered_days)) >= 4
+        assert state.feedback is not None
+        assert set(state.feedback.model_dump().keys()) == {"summary", "strengths", "gaps", "next"}
+
+
+class TestFinalFeedbackGrounding:
+    def test_feedback_prompt_uses_turn_evidence(self):
+        llm = PromptSensitiveLLM(eval_result=_strong_eval())
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
+        state = OrchestratorState(candidate=CANDIDATE)
+        orch.start(state)
+
+        for i in range(12):
+            if state.done:
+                break
+            orch.next_turn(
+                state,
+                "I would combine embeddings with BM25 because rare medical terms may not have strong semantic representations.",
+            )
+
+        assert state.feedback is not None
+        assert llm.feedback_prompts, "Expected at least one feedback prompt"
+        feedback_prompt = llm.feedback_prompts[-1].lower()
+        assert "missing_concepts" in feedback_prompt
+        assert "weaknesses" in feedback_prompt
+        assert "overall score" in feedback_prompt

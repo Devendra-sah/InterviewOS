@@ -267,6 +267,7 @@ class Orchestrator:
 
         # Difficulty
         c.current_difficulty = eval_.recommended_difficulty
+        c.current_strategy = turn.strategy
 
         # Streak counters
         if eval_.score >= 7.0:
@@ -371,11 +372,18 @@ class Orchestrator:
         """Ask the LLM to synthesise final feedback from all turns."""
         turns_data = [
             {
+                "turn": t.turn_number,
+                "day": t.curriculum_day,
+                "topic": t.topic,
+                "strategy": t.strategy,
+                "difficulty": t.difficulty,
                 "question": t.question,
                 "answer": t.answer[:300],
                 "score": t.evaluation.score if t.evaluation else None,
                 "strengths": t.evaluation.strengths if t.evaluation else [],
                 "weaknesses": t.evaluation.weaknesses if t.evaluation else [],
+                "missing_concepts": t.evaluation.missing_concepts if t.evaluation else [],
+                "follow_up_needed": t.evaluation.follow_up_needed if t.evaluation else None,
             }
             for t in state.turns
         ]
@@ -385,6 +393,8 @@ class Orchestrator:
             f"Interview turns:\n{json.dumps(turns_data, indent=2)}\n\n"
             f"Overall score: {state.competency.overall_score:.1f}/10\n"
             f"Covered days: {state.competency.covered_days}\n"
+            "Use only the evidence above. Do not invent gaps that are contradicted\n"
+            "by the candidate's answers or evaluator notes.\n"
             "Write the final report."
         )
         messages = [
