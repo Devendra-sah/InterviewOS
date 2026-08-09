@@ -17,3 +17,60 @@ Traceback (most recent call last):
     raise Exception("API failure")
 Exception: API failure
 
+Provider error: Exception - API failure
+Traceback (most recent call last):
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\routers\interview.py", line 68, in interview
+    first_question = orchestrator.start(orch_state)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\orchestrator.py", line 141, in start
+    decision = self._planner.decide(
+        candidate=state.candidate,
+    ...<4 lines>...
+        memories=memories,
+    )
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 135, in decide
+    nq = self._plan(candidate, state, history, last_eval, memories=memories)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 250, in _plan
+    return self._llm.generate_structured(messages, NextQuestion)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\tests\test_llm.py", line 83, in generate_structured
+    raise Exception("API failure")
+Exception: API failure
+
+Provider error: Exception - API failure
+Traceback (most recent call last):
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\routers\interview.py", line 68, in interview
+    first_question = orchestrator.start(orch_state)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\orchestrator.py", line 141, in start
+    decision = self._planner.decide(
+        candidate=state.candidate,
+    ...<4 lines>...
+        memories=memories,
+    )
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 135, in decide
+    nq = self._plan(candidate, state, history, last_eval, memories=memories)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 250, in _plan
+    return self._llm.generate_structured(messages, NextQuestion)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\tests\test_llm.py", line 83, in generate_structured
+    raise Exception("API failure")
+Exception: API failure
+
+Provider error: Exception - API failure
+Traceback (most recent call last):
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\routers\interview.py", line 68, in interview
+    first_question = orchestrator.start(orch_state)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\orchestrator.py", line 141, in start
+    decision = self._planner.decide(
+        candidate=state.candidate,
+    ...<4 lines>...
+        memories=memories,
+    )
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 135, in decide
+    nq = self._plan(candidate, state, history, last_eval, memories=memories)
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\app\agents\planner.py", line 250, in _plan
+    return self._llm.generate_structured(messages, NextQuestion)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\STUDY MATERIAL\INTERVIEWOS\InterviewOS\backend\tests\test_llm.py", line 83, in generate_structured
+    raise Exception("API failure")
+Exception: API failure
+

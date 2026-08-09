@@ -44,7 +44,6 @@ from app.schemas.intelligence import (
     NextQuestion,
 )
 from app.schemas.interview import FeedbackPayload
-from app.services.memory import MemoryProvider, MemoryEvidence
 
 if TYPE_CHECKING:
     from app.services.llm import LLMProvider
@@ -70,7 +69,6 @@ class OrchestratorState:
     turns: list[InterviewTurn] = field(default_factory=list)
     pending_question: NextQuestion | None = None   # set by planner, shown to candidate
     done: bool = False
-    _memory_written_turns: set[int] = field(default_factory=set)
     feedback: FeedbackPayload | None = None
 
     @property
@@ -97,13 +95,6 @@ class Orchestrator:
         self._llm = llm
         self._memory_provider = memory_provider
 
-
-    def _get_memory_provider(self) -> MemoryProvider:
-        """Get memory provider, initializing from environment if needed."""
-        if self._memory_provider is None:
-            from app.services.memory import get_memory_provider
-            self._memory_provider = get_memory_provider()
-        return self._memory_provider
     # ── Public API ────────────────────────────────────────────────────────────
 
     def start(self, state: OrchestratorState) -> str:
@@ -111,33 +102,8 @@ class Orchestrator:
         Called once when the session is created.
         Plans and generates the first question.
         """
-        # Recall memories for the candidate based on profile (no interview history yet)
+        # No memory to recall on first turn
         memories = None
-        if self._memory_provider is not None:
-            try:
-                # Form a query from the candidate's profile
-                candidate = state.candidate
-                query = f"{candidate.member.jobRole}: new interview"
-                memories = self._memory_provider.recall_relevant(
-                    candidate.member.id, query, limit=5
-                )
-            except Exception as e:
-                # Log warning but do not crash the interview
-                print(f"Warning: Failed to recall memories in start: {e}")
-                memories = []
-        else:
-            # Try to get the provider from environment
-            try:
-                provider = self._get_memory_provider()
-                candidate = state.candidate
-                query = f"{candidate.member.jobRole}: new interview"
-                memories = provider.recall_relevant(
-                    candidate.member.id, query, limit=5
-                )
-            except Exception as e:
-                print(f"Warning: Failed to recall memories in start: {e}")
-                memories = []
-
         decision = self._planner.decide(
             candidate=state.candidate,
             state=state.competency,
@@ -193,46 +159,23 @@ class Orchestrator:
         # 3. Update competency state
         self._update_competency(state.competency, turn, eval_result)
 
-        # 4. Extract and remember evidence if meaningful
-        if self._is_meaningful_evidence(eval_result, answer):
-            evidence = self._create_evidence(state, turn, eval_result)
-            self._remember_evidence(state, evidence, turn.turn_number)
-
-        # 5. Recall relevant memories for planning the next question
-        memories = None
-        try:
-            provider = self._get_memory_provider()
-            candidate = state.candidate
-            # Form a query based on the current competency state (after update)
-            strengths_str = ", ".join(state.competency.strengths[:2]) if state.competency.strengths else "none"
-            weaknesses_str = ", ".join(state.competency.weaknesses[:2]) if state.competency.weaknesses else "none"
-            query = f"{candidate.member.jobRole}: strengths {strengths_str}; weaknesses {weaknesses_str}"
-            memories = provider.recall_relevant(
-                candidate.member.id, query, limit=5
-            )
-        except Exception as e:
-            # Log warning but do not crash the interview
-            print(f"Warning: Failed to recall memories: {e}")
-            memories = []
-
-        # 6. Decide what comes next
+        # 4. Decide what comes next
         decision = self._planner.decide(
             candidate=state.candidate,
             state=state.competency,
             history=state.turns,
             last_eval=eval_result,
             question_number=state.question_count,
-            memories=memories,
         )
 
-        # 7. If interview complete, build feedback
+        # 5. If interview complete, build feedback
         if decision.should_end:
             state.done = True
             state.feedback = self._build_feedback(state)
             state.pending_question = None
             return ("Interview completed.", True, state.feedback)
 
-        # 8. Generate next question
+        # 6. Generate next question
         state.pending_question = decision.next_question
         next_q = self._interviewer.generate_question(
             decision.next_question, state.candidate, state.turns
@@ -278,94 +221,6 @@ class Orchestrator:
         else:
             c.consecutive_strong = 0
             c.consecutive_weak = 0
-
-    def _is_meaningful_evidence(self, eval_result: AnswerEvaluation, answer: str) -> bool:
-        """
-        Determine if an answer produces meaningful evidence for memory.
-        Do not store trivial answers unless the evaluation indicates it's evidence of a gap.
-        """
-        # Don't store very short answers unless they reveal a weakness
-        if len(answer.strip()) < 3:
-            # Only store if it's a weakness (score < 5) or indicates lack of knowledge
-            return eval_result.score < 5.0 or "don't know" in answer.lower() or "unsure" in answer.lower()
-
-        # Store if there are weaknesses or missing concepts
-        if eval_result.weaknesses or eval_result.missing_concepts:
-            return True
-
-        # Store if score is low (indicates struggle)
-        if eval_result.score < 5.0:
-            return True
-
-        # Store if evaluator recommends follow-up (indicates something to explore)
-        if eval_result.follow_up_needed:
-            return True
-
-        # Otherwise, for high scores with no weaknesses, we might still store as strength evidence
-        # but let's be selective - only store if there are notable strengths
-        if eval_result.score >= 8.0 and eval_result.strengths:
-            return True
-
-        return False
-
-    def _create_evidence(
-        self,
-        state: OrchestratorState,
-        turn: InterviewTurn,
-        eval_result: AnswerEvaluation,
-    ) -> MemoryEvidence:
-        """Create a MemoryEvidence object from current turn and evaluation."""
-        # Determine significance based on evaluation
-        significance_parts = []
-        if eval_result.score >= 8.0:
-            significance_parts.append("strong understanding demonstrated")
-        elif eval_result.score >= 6.0:
-            significance_parts.append("moderate understanding")
-        else:
-            significance_parts.append("knowledge gap identified")
-
-        if eval_result.weaknesses:
-            significance_parts.append(f"weaknesses: {', '.join(eval_result.weaknesses[:2])}")
-        if eval_result.missing_concepts:
-            significance_parts.append(f"missing concepts: {', '.join(eval_result.missing_concepts[:2])}")
-        if eval_result.strengths:
-            significance_parts.append(f"strengths: {', '.join(eval_result.strengths[:2])}")
-
-        significance = "; ".join(significance_parts) if significance_parts else "interview evidence"
-
-        return MemoryEvidence(
-            candidate_id=state.candidate.member.id,
-            session_id=state.session_id if hasattr(state, 'session_id') else "unknown",
-            turn_number=turn.turn_number,
-            curriculum_day=turn.curriculum_day,
-            topic=turn.topic,
-            question=turn.question,
-            answer=turn.answer[:500],  # Limit answer length
-            strengths=eval_result.strengths,
-            weaknesses=eval_result.weaknesses,
-            missing_concepts=eval_result.missing_concepts,
-            score=eval_result.score,
-            significance=significance,
-        )
-
-    def _remember_evidence(
-        self,
-        state: OrchestratorState,
-        evidence: MemoryEvidence,
-        turn_number: int,
-    ) -> None:
-        """Write evidence to memory provider with deduplication."""
-        # Avoid duplicate writes for the same turn
-        if turn_number in state._memory_written_turns:
-            return
-
-        try:
-            provider = self._get_memory_provider()
-            provider.remember_evidence(evidence)
-            state._memory_written_turns.add(turn_number)
-        except Exception as e:
-            # Log warning but do not crash the interview
-            print(f"Warning: Failed to write memory: {e}")
 
     def _build_feedback(self, state: OrchestratorState) -> FeedbackPayload:
         """Ask the LLM to synthesise final feedback from all turns."""

@@ -7,6 +7,7 @@ Decides what the next question should look like based on:
   - CompetencyState (running picture of the interview so far)
   - InterviewTurn history
   - Curriculum coverage constraints
+  - Relevant memories from Breeth
 
 Supported strategies
 --------------------
@@ -27,7 +28,7 @@ After >= 6 follow-up weakness probes in a row, the planner forces a new day.
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 from app.schemas.candidate import CandidateRecord
 from app.schemas.intelligence import (
@@ -39,6 +40,7 @@ from app.schemas.intelligence import (
     NextQuestion,
     Strategy,
 )
+from app.services.memory import MemoryResult, MemoryProvider
 from app.services import curriculum_loader
 
 if TYPE_CHECKING:
@@ -80,13 +82,14 @@ Rules:
 - Prioritize meaningful follow-ups if the last evaluation recommended one.
 - Must eventually cover at least 4 distinct curriculum days.
 - Use only curriculum days provided in the context.
+- Consider relevant memories from the candidate's interview history.
 """
 
 
 def _next_uncovered_day(
     candidate: CandidateRecord,
-    covered_days: list[int],
-    preferred_days: list[int],
+    covered_days: List[int],
+    preferred_days: List[int],
 ) -> int:
     """Pick the best uncovered day the candidate has worked on."""
     candidate_days = {m.day for m in candidate.missions}
@@ -114,9 +117,10 @@ class Planner:
         self,
         candidate: CandidateRecord,
         state: CompetencyState,
-        history: list[InterviewTurn],
+        history: List[InterviewTurn],
         last_eval: AnswerEvaluation | None,
         question_number: int,
+        memories: Optional[List[MemoryResult]] = None,
     ) -> InterviewDecision:
         """
         Determine whether the interview should end and, if not, what
@@ -125,10 +129,10 @@ class Planner:
         should_end = self._should_end(state, history, question_number)
         if should_end:
             # Generate a closing question (synthesis) then end
-            nq = self._plan(candidate, state, history, last_eval, force_end=True)
+            nq = self._plan(candidate, state, history, last_eval, force_end=True, memories=memories)
             return InterviewDecision(next_question=nq, should_end=True, end_reason="target reached")
 
-        nq = self._plan(candidate, state, history, last_eval)
+        nq = self._plan(candidate, state, history, last_eval, memories=memories)
         return InterviewDecision(next_question=nq, should_end=False)
 
     # ── Completion check ──────────────────────────────────────────────────────
@@ -136,7 +140,7 @@ class Planner:
     def _should_end(
         self,
         state: CompetencyState,
-        history: list[InterviewTurn],
+        history: List[InterviewTurn],
         question_number: int,
     ) -> bool:
         if question_number < MIN_QUESTIONS:
@@ -147,7 +151,7 @@ class Planner:
     # ── Difficulty update ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _update_difficulty(state: CompetencyState, eval_: AnswerEvaluation) -> Difficulty:
+    def _update_difficulty(state: CompetitiveState, eval_: AnswerEvaluation) -> Difficulty:
         if eval_.score >= 7.0:
             return _ESCALATE[state.current_difficulty]
         elif eval_.score >= 5.0:
@@ -185,9 +189,10 @@ class Planner:
         self,
         candidate: CandidateRecord,
         state: CompetencyState,
-        history: list[InterviewTurn],
+        history: List[InterviewTurn],
         last_eval: AnswerEvaluation | None,
         force_end: bool = False,
+        memories: Optional[List[MemoryResult]] = None,
     ) -> NextQuestion:
         # Pick next curriculum day
         candidate_days = sorted({m.day for m in candidate.missions})
@@ -210,6 +215,18 @@ class Planner:
         )
         weaknesses = "\n".join(f"- {w}" for w in state.weaknesses) or "none yet"
 
+        # Format memories for the prompt
+        memories_text = ""
+        if memories:
+            memories_list = []
+            for m in memories:
+                # Truncate fact to avoid too long prompt
+                fact = m.fact
+                if len(fact) > 200:
+                    fact = fact[:200] + "..."
+                memories_list.append(f"- {fact}")
+            memories_text = "\nRelevant candidate memories:\n" + "\n".join(memories_list) if memories_list else ""
+
         user_content = (
             f"## Candidate\n"
             f"{candidate.member.name}, {candidate.member.jobRole}, "
@@ -220,7 +237,8 @@ class Planner:
             f"## Current State\n"
             f"Difficulty: {difficulty}, Strategy: {strategy}\n"
             f"Covered days: {state.covered_days}\n"
-            f"Question #{len(history) + 1}\n\n"
+            f"Question #{len(history) + 1}"
+            f"{memories_text}\n\n"
             f"Generate the next interview question."
         )
 

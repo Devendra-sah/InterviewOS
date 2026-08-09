@@ -9,6 +9,7 @@ NO real network calls are made.
 from __future__ import annotations
 
 import json
+import os
 import pytest
 
 from fastapi.testclient import TestClient
@@ -16,6 +17,12 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services import session_store
 from app.services.llm import FakeLLMProvider, LLMProvider
+from app.services.memory import (
+    FakeMemoryProvider,
+    get_memory_provider,
+    reset_memory_provider,
+    set_memory_provider,
+)
 from app.schemas.intelligence import (
     AnswerEvaluation,
     CompetencyState,
@@ -158,9 +165,15 @@ def isolate():
     """Reset global state around every test."""
     session_store.clear_all()
     reset_provider()
+    # Set memory provider to fake for tests
+    os.environ["MEMORY_PROVIDER"] = "fake"
+    set_memory_provider(FakeMemoryProvider())
     yield
     session_store.clear_all()
     reset_provider()
+    reset_memory_provider()
+    if "MEMORY_PROVIDER" in os.environ:
+        del os.environ["MEMORY_PROVIDER"]
 
 
 @pytest.fixture
@@ -289,14 +302,14 @@ class TestPlannerRepetition:
 
 class TestCurriculumCoverage:
     def test_day_added_to_covered_days_after_turn(self):
-        orch = Orchestrator(SmartFakeLLM())
+        orch = Orchestrator(SmartFakeLLM(), memory_provider=FakeMemoryProvider())
         state = OrchestratorState(candidate=CANDIDATE)
         orch.start(state)
         orch.next_turn(state, "My answer")
         assert len(state.competency.covered_days) >= 1
 
     def test_topic_added_to_covered_topics_after_turn(self):
-        orch = Orchestrator(SmartFakeLLM())
+        orch = Orchestrator(SmartFakeLLM(), memory_provider=FakeMemoryProvider())
         state = OrchestratorState(candidate=CANDIDATE)
         orch.start(state)
         orch.next_turn(state, "My answer")
@@ -304,7 +317,7 @@ class TestCurriculumCoverage:
 
     def test_covered_days_grows_across_turns(self):
         llm = SmartFakeLLM(day_sequence=[7, 8, 10, 12, 16, 22, 28, 31])
-        orch = Orchestrator(llm)
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
         state = OrchestratorState(candidate=CANDIDATE)
         orch.start(state)
         for i in range(4):
@@ -319,7 +332,7 @@ class TestCurriculumCoverage:
 class TestInterviewLength:
     def _drive_n_turns(self, n: int) -> OrchestratorState:
         llm = SmartFakeLLM(day_sequence=list(range(7, 7 + n + 2)))
-        orch = Orchestrator(llm)
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
         state = OrchestratorState(candidate=CANDIDATE)
         orch.start(state)
         for i in range(n):
@@ -336,7 +349,7 @@ class TestInterviewLength:
         llm = SmartFakeLLM(
             day_sequence=[7, 8, 10, 12, 16, 22, 28, 31, 7, 8, 10, 12],
         )
-        orch = Orchestrator(llm)
+        orch = Orchestrator(llm, memory_provider=FakeMemoryProvider())
         state = OrchestratorState(candidate=CANDIDATE)
         orch.start(state)
         for i in range(12):
@@ -352,7 +365,7 @@ class TestInterviewLength:
 class TestDistinctDayCoverage:
     def test_4_distinct_days_possible(self):
         # Orchestrator state tracking: each turn records its curriculum day
-        orch = Orchestrator(SmartFakeLLM(day_sequence=[7, 8, 10, 12, 16, 22]))
+        orch = Orchestrator(SmartFakeLLM(day_sequence=[7, 8, 10, 12, 16, 22]), memory_provider=FakeMemoryProvider())
         state = OrchestratorState(candidate=CANDIDATE)
         orch.start(state)
         for i in range(8):

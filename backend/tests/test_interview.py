@@ -4,10 +4,17 @@ Tests for POST /api/interview – covers the exact contract from technical-spec.
 Run:  cd backend && pytest tests/ -v
 """
 import pytest
+import os
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import session_store
+from app.services.memory import (
+    FakeMemoryProvider,
+    get_memory_provider,
+    reset_memory_provider,
+    set_memory_provider,
+)
 from app.services.llm import FakeLLMProvider
 from app.routers.interview import set_provider, reset_provider
 from app.schemas.intelligence import (
@@ -79,9 +86,15 @@ def clear_sessions():
     """Wipe sessions before each test so tests are isolated."""
     session_store.clear_all()
     set_provider(_CycleFakeLLM())
+    # Set memory provider to fake for tests
+    os.environ["MEMORY_PROVIDER"] = "fake"
+    set_memory_provider(FakeMemoryProvider())
     yield
     session_store.clear_all()
     reset_provider()
+    reset_memory_provider()
+    if "MEMORY_PROVIDER" in os.environ:
+        del os.environ["MEMORY_PROVIDER"]
 
 
 # ── 1. Init turn ──────────────────────────────────────────────────────────────
