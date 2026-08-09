@@ -1,35 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  candidateOptions,
+  getCandidateHighlights,
+  getCandidateMeta,
+  getCandidateMilestoneCount,
+} from './candidates'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 const TOTAL_QUESTIONS = 10
-
-const DEMO_CANDIDATE = {
-  member: {
-    id: 'CAND-001',
-    name: 'Sarah Johnson',
-    jobRole: 'Senior Data Engineer',
-    yearsExperience: 9,
-    education: 'MS Computer Science',
-    status: 'COMPLETED',
-  },
-  missions: [
-    { day: 7, title: 'Embeddings Explained', passed: true, attempts: 1 },
-    { day: 8, title: 'Vector Databases Overview', passed: true, attempts: 1 },
-    { day: 10, title: 'Retrieval & Matching Engine', passed: true, attempts: 2 },
-    { day: 12, title: 'Prompt Engineering Fundamentals', passed: true, attempts: 4 },
-    { day: 16, title: 'Chatbot Backend & API Integration', passed: true, attempts: 1 },
-    { day: 22, title: 'Multi-Agent Orchestration', passed: true, attempts: 2 },
-    { day: 23, title: 'Model Context Protocol (MCP)', passed: true, attempts: 2 },
-    { day: 28, title: 'Docker & Kubernetes Deployment', passed: true, attempts: 3 },
-    { day: 29, title: 'Monitoring, Logging & Observability', skipped: true },
-    { day: 31, title: 'Capstone Project & Final Demo', passed: true, attempts: 1 },
-  ],
-  signals: {
-    commitDays: 28,
-    missionsCompleted: 30,
-    missionsFirstTry: 20,
-  },
-}
 
 function createSessionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -101,9 +79,216 @@ async function postInterview(payload) {
   })
 }
 
+function ProgressIndicator({ questionNumber, totalQuestions, compact = false }) {
+  const percent = Math.round((Math.max(0, Math.min(questionNumber, totalQuestions)) / totalQuestions) * 100)
+
+  return (
+    <div className={`progress-indicator${compact ? ' progress-indicator--compact' : ''}`}>
+      <div className="progress-indicator__text">
+        Question {questionNumber} of {totalQuestions}
+      </div>
+      <div className="progress-indicator__bar" aria-hidden="true">
+        <span style={{ width: `${percent}%` }} />
+      </div>
+      <div className="progress-indicator__percent">{percent}%</div>
+    </div>
+  )
+}
+
+function CandidateCard({ candidate, selected, onSelect }) {
+  const initials = candidate.member.name
+    .split(' ')
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join('')
+
+  return (
+    <button
+      type="button"
+      className={`candidate-card ${selected ? 'candidate-card--selected' : ''}`}
+      onClick={() => onSelect(candidate)}
+      aria-pressed={selected}
+    >
+      <div className="candidate-card__avatar" aria-hidden="true">
+        {initials}
+      </div>
+      <div className="candidate-card__body">
+        <div className="candidate-card__header">
+          <div>
+            <div className="candidate-card__name">{candidate.member.name}</div>
+            <div className="candidate-card__role">{candidate.member.jobRole}</div>
+          </div>
+          <span className="candidate-card__select-label">{selected ? 'Selected' : 'Select'}</span>
+        </div>
+        <div className="candidate-card__meta">{getCandidateMeta(candidate)}</div>
+        <div className="candidate-card__milestones">{getCandidateMilestoneCount(candidate)} curriculum milestones</div>
+        <div className="candidate-card__topics">{getCandidateHighlights(candidate).join(' · ')}</div>
+      </div>
+    </button>
+  )
+}
+
+function ExitDialog({ open, onStay, onExit }) {
+  useEffect(() => {
+    if (!open) {
+      return undefined
+    }
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onStay()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onStay])
+
+  if (!open) {
+    return null
+  }
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onClick={onStay}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="exit-dialog-title"
+        aria-describedby="exit-dialog-description"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="exit-dialog-title">Leave this interview?</h2>
+        <p id="exit-dialog-description">
+          Your current session will remain on the server, but this screen will return to candidate selection.
+        </p>
+        <div className="dialog__actions">
+          <button type="button" className="button button--secondary" onClick={onStay}>
+            Stay
+          </button>
+          <button type="button" className="button button--danger" onClick={onExit}>
+            Exit
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Transcript({ messages }) {
+  if (!messages.length) {
+    return null
+  }
+
+  return (
+    <details className="transcript">
+      <summary>Transcript ({messages.length} messages)</summary>
+      <div className="transcript__list">
+        {messages.map((message) => (
+          <div key={message.id} className={`transcript__item transcript__item--${message.role}`}>
+            <div className="transcript__role">{message.role === 'interviewer' ? 'Interviewer' : 'Candidate'}</div>
+            <div className="transcript__text">{message.text}</div>
+          </div>
+        ))}
+      </div>
+    </details>
+  )
+}
+
+function ResultsReport({ candidate, feedback, transcriptCount, onStartAnother }) {
+  return (
+    <main className="screen screen--results">
+      <header className="app-header app-header--results">
+        <div>
+          <div className="app-header__brand">INTERVIEWOS</div>
+          <div className="app-header__subtitle">Technical Interview Platform</div>
+        </div>
+        <div className="status-pill status-pill--success">Interview complete</div>
+      </header>
+
+      <section className="results-report">
+        <div className="results-report__header">
+          <div>
+            <div className="results-report__eyebrow">Interview complete</div>
+            <h1>{candidate.member.name}</h1>
+            <p>{candidate.member.jobRole}</p>
+          </div>
+          <div className="results-report__meta">
+            <div className="results-report__meta-label">Assessment score</div>
+            <div className="results-report__meta-value">Not exposed by API</div>
+          </div>
+        </div>
+
+        <div className="results-summary">
+          <div className="section-heading">Performance summary</div>
+          <p>{feedback.summary}</p>
+        </div>
+
+        <div className="results-grid">
+          <section className="results-section">
+            <div className="section-heading">Strengths</div>
+            <ul>
+              {feedback.strengths.length ? (
+                feedback.strengths.map((item, index) => <li key={`strength-${index}`}>{item}</li>)
+              ) : (
+                <li>No strengths were returned by the backend.</li>
+              )}
+            </ul>
+          </section>
+
+          <section className="results-section">
+            <div className="section-heading">Development areas</div>
+            <ul>
+              {feedback.gaps.length ? (
+                feedback.gaps.map((item, index) => <li key={`gap-${index}`}>{item}</li>)
+              ) : (
+                <li>No development areas were returned by the backend.</li>
+              )}
+            </ul>
+          </section>
+
+          <section className="results-section results-section--full">
+            <div className="section-heading">Recommended next steps</div>
+            <ul>
+              {feedback.next.length ? (
+                feedback.next.map((item, index) => <li key={`next-${index}`}>{item}</li>)
+              ) : (
+                <li>No next steps were returned by the backend.</li>
+              )}
+            </ul>
+          </section>
+
+          <section className="results-section results-section--full results-section--subtle">
+            <div className="section-heading">Interview evidence</div>
+            <div className="evidence-row">
+              <span>Questions answered</span>
+              <strong>{transcriptCount}</strong>
+            </div>
+            <div className="evidence-row">
+              <span>Interview completed</span>
+              <strong>Yes</strong>
+            </div>
+            <div className="evidence-row">
+              <span>Candidate role</span>
+              <strong>{candidate.member.jobRole}</strong>
+            </div>
+          </section>
+        </div>
+
+        <div className="results-actions">
+          <button type="button" className="button button--primary" onClick={onStartAnother}>
+            Start another interview
+          </button>
+        </div>
+      </section>
+    </main>
+  )
+}
+
 function App() {
   const [view, setView] = useState('landing')
-  const [candidate] = useState(DEMO_CANDIDATE)
+  const [selectedCandidate, setSelectedCandidate] = useState(null)
+  const [activeCandidate, setActiveCandidate] = useState(null)
   const [sessionId, setSessionId] = useState('')
   const [messages, setMessages] = useState([])
   const [currentQuestion, setCurrentQuestion] = useState('')
@@ -113,20 +298,19 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [error, setError] = useState('')
+  const [showExitDialog, setShowExitDialog] = useState(false)
 
   const textareaRef = useRef(null)
   const conversationEndRef = useRef(null)
 
-  const coveredDays = useMemo(
-    () => candidate.missions.map((mission) => mission.day).sort((a, b) => a - b),
-    [candidate],
+  const transcriptCount = messages.filter((message) => message.role === 'candidate').length
+  const milestonesCount = activeCandidate ? getCandidateMilestoneCount(activeCandidate) : 0
+  const progressPercent = Math.round((Math.max(0, Math.min(questionNumber, TOTAL_QUESTIONS)) / TOTAL_QUESTIONS) * 100)
+  const completedTopics = useMemo(
+    () => (activeCandidate ? getCandidateHighlights(activeCandidate, 4) : []),
+    [activeCandidate],
   )
 
-  const transcriptCount = messages.filter((message) => message.role === 'candidate').length
-  const progressValue = Math.max(0, Math.min(questionNumber, TOTAL_QUESTIONS))
-  const progressPercent = Math.round((progressValue / TOTAL_QUESTIONS) * 100)
-  const interviewStatus =
-    view === 'results' ? 'Interview complete' : isSubmitting ? 'AI is thinking...' : 'Interview in progress'
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, isSubmitting, view])
@@ -137,8 +321,32 @@ function App() {
     }
   }, [view, isSubmitting])
 
+  function resetToSelection({ clearSelection = true } = {}) {
+    setView('landing')
+    setSessionId('')
+    setMessages([])
+    setCurrentQuestion('')
+    setQuestionNumber(0)
+    setDraft('')
+    setIsStarting(false)
+    setIsSubmitting(false)
+    setFeedback(null)
+    setError('')
+    setShowExitDialog(false)
+    setActiveCandidate(null)
+    if (clearSelection) {
+      setSelectedCandidate(null)
+    }
+  }
+
   async function startInterview() {
+    if (!selectedCandidate) {
+      setError('Select a candidate to begin the interview.')
+      return
+    }
+
     const nextSessionId = createSessionId()
+    setActiveCandidate(selectedCandidate)
     setSessionId(nextSessionId)
     setIsStarting(true)
     setIsSubmitting(false)
@@ -154,7 +362,7 @@ function App() {
     try {
       response = await postInterview({
         sessionId: nextSessionId,
-        candidate,
+        candidate: selectedCandidate,
       })
       const data = await readResponseBody(response)
 
@@ -172,16 +380,14 @@ function App() {
       setMessages([initialMessage])
       setCurrentQuestion(initialReply)
       setQuestionNumber(1)
+      setView(data?.done ? 'results' : 'interview')
 
       if (data?.done) {
         setFeedback(normalizeFeedback(data.feedback))
-        setView('results')
-      } else {
-        setView('interview')
       }
     } catch (caughtError) {
       setError(normalizeErrorMessage(caughtError, response))
-      setView('landing')
+      resetToSelection({ clearSelection: false })
     } finally {
       setIsStarting(false)
     }
@@ -241,353 +447,223 @@ function App() {
     }
   }
 
-  function resetAndLaunch() {
-    setView('landing')
-    startInterview()
+  function handleStartAnother() {
+    resetToSelection()
   }
 
-  const strengthItems = feedback?.strengths ?? []
-  const gapItems = feedback?.gaps ?? []
-  const nextItems = feedback?.next ?? []
+  if (view === 'results' && activeCandidate && feedback) {
+    return (
+      <ResultsReport
+        candidate={activeCandidate}
+        feedback={feedback}
+        transcriptCount={transcriptCount}
+        onStartAnother={handleStartAnother}
+      />
+    )
+  }
 
   return (
     <div className="app-shell">
-      <div className="ambient ambient-a" />
-      <div className="ambient ambient-b" />
-      <div className="ambient ambient-c" />
+      <main className={`screen screen--${view}`}>
+        <header className="app-header">
+          <div>
+            <div className="app-header__brand">INTERVIEWOS</div>
+            <div className="app-header__subtitle">Technical Interview Platform</div>
+          </div>
+          <div className="status-pill">System operational</div>
+        </header>
 
-      <header className="topbar">
-        <div>
-          <div className="brand-mark">INTERVIEWOS</div>
-          <div className="brand-tagline">Your curriculum. Your projects. Your interview.</div>
-        </div>
-
-        <div className="topbar-status">
-          <span className={`status-chip ${view === 'results' ? 'status-chip--complete' : 'status-chip--live'}`}>
-            {interviewStatus}
-          </span>
-        </div>
-      </header>
-
-      <main className={`screen screen--${view}`} key={view}>
         {error ? (
-          <section className="error-banner" role="alert" aria-live="polite">
-            <span className="error-banner__label">System notice</span>
-            <p>{error}</p>
-          </section>
+          <div className="inline-alert" role="alert" aria-live="polite">
+            {error}
+          </div>
         ) : null}
 
         {view === 'landing' ? (
-          <section className="landing-layout">
-            <div className="hero-copy panel panel--hero">
-              <div className="eyebrow">AI-Powered Technical Interviewer</div>
-              <h1>INTERVIEWOS</h1>
-              <p className="hero-subtitle">Your curriculum. Your projects. Your interview.</p>
-              <p className="hero-body">
-                InterviewOS builds a personalized technical interview from your learning journey, adapts to your
-                answers, and remembers what matters.
-              </p>
+          <section className="landing-view">
+            <div className="landing-intro panel panel--compact">
+              <div className="landing-intro__copy">
+                <div className="section-kicker">Technical Interview</div>
+                <h1>
+                  Evaluate technical depth using the candidate&apos;s learning history, projects and demonstrated evidence.
+                </h1>
+                <p>
+                  Select a candidate to launch a structured technical interview powered by the existing InterviewOS
+                  backend.
+                </p>
+              </div>
 
-              <div className="hero-actions">
-                <button className="primary-button" onClick={startInterview} disabled={isStarting}>
-                  {isStarting ? 'Launching interview...' : 'Start Technical Interview →'}
+              <div className="facts-row" aria-label="Product facts">
+                <div>Adaptive questioning</div>
+                <div>Persistent candidate memory</div>
+                <div>Evidence-based evaluation</div>
+              </div>
+            </div>
+
+            <section className="selector-panel panel panel--compact">
+              <div className="selector-panel__header">
+                <div>
+                  <div className="section-kicker">Select candidate</div>
+                  <h2>Choose one candidate to interview</h2>
+                </div>
+                <div className="selector-panel__count">{candidateOptions.length} candidates</div>
+              </div>
+
+              <div className="candidate-grid">
+                {candidateOptions.map((candidate) => (
+                  <CandidateCard
+                    key={candidate.member.id}
+                    candidate={candidate}
+                    selected={selectedCandidate?.member.id === candidate.member.id}
+                    onSelect={setSelectedCandidate}
+                  />
+                ))}
+              </div>
+
+              <div className="landing-actions">
+                <button
+                  type="button"
+                  className="button button--primary"
+                  onClick={startInterview}
+                  disabled={isStarting || !selectedCandidate}
+                >
+                  {isStarting ? 'Starting interview...' : 'Start interview'}
                 </button>
-                <span className="hero-hint">Demo candidate loaded automatically from the InterviewOS dataset.</span>
-              </div>
-
-              <div className="capability-grid">
-                <article className="capability-card">
-                  <span className="capability-card__label">PERSONALIZED</span>
-                  <h2>Built around the candidate's completed curriculum.</h2>
-                  <p>The interview adapts to the learning path, projects, and evidence already available.</p>
-                </article>
-
-                <article className="capability-card">
-                  <span className="capability-card__label">ADAPTIVE</span>
-                  <h2>Follow-up questions respond to strengths and weaknesses.</h2>
-                  <p>Question flow stays dynamic, so every answer changes the next prompt.</p>
-                </article>
-
-                <article className="capability-card">
-                  <span className="capability-card__label">MEMORY-POWERED</span>
-                  <h2>Persistent candidate evidence using Breeth.</h2>
-                  <p>InterviewOS keeps the interaction grounded in prior signals and interview memory.</p>
-                </article>
-              </div>
-            </div>
-
-            <aside className="preview-panel panel panel--preview">
-              <div className="preview-panel__header">
-                <span className="preview-panel__title">Interview Preview</span>
-                <span className="preview-panel__pulse" />
-              </div>
-
-              <div className="preview-metric-grid">
-                <div className="mini-metric">
-                  <span className="mini-metric__label">Candidate</span>
-                  <strong>{candidate.member.name}</strong>
-                </div>
-                <div className="mini-metric">
-                  <span className="mini-metric__label">Role</span>
-                  <strong>{candidate.member.jobRole}</strong>
-                </div>
-                <div className="mini-metric">
-                  <span className="mini-metric__label">Experience</span>
-                  <strong>{candidate.member.yearsExperience} years</strong>
-                </div>
-                <div className="mini-metric">
-                  <span className="mini-metric__label">Curriculum</span>
-                  <strong>{candidate.missions.length} covered days</strong>
-                </div>
-              </div>
-
-              <div className="preview-flow">
-                <div className="preview-flow__item is-active">Initialize candidate profile</div>
-                <div className="preview-flow__item">Generate adaptive interview path</div>
-                <div className="preview-flow__item">Capture answers and evidence</div>
-                <div className="preview-flow__item">Deliver final feedback report</div>
-              </div>
-
-              <div className="preview-notes">
-                <div>
-                  <span className="preview-notes__label">Interview mode</span>
-                  <strong>Enterprise AI cockpit</strong>
-                </div>
-                <div>
-                  <span className="preview-notes__label">Status</span>
-                  <strong>Ready for launch</strong>
-                </div>
-              </div>
-            </aside>
-          </section>
-        ) : null}
-
-        {view === 'interview' ? (
-          <section className="cockpit-layout">
-            <aside className="panel sidebar-panel">
-              <div className="panel-heading">Candidate</div>
-              <div className="candidate-card">
-                <div className="candidate-avatar">SJ</div>
-                <div>
-                  <h2>{candidate.member.name}</h2>
-                  <p>{candidate.member.jobRole}</p>
-                </div>
-              </div>
-
-              <div className="sidebar-stack">
-                <div className="sidebar-stat">
-                  <span>Role</span>
-                  <strong>{candidate.member.jobRole}</strong>
-                </div>
-
-                <div className="sidebar-stat">
-                  <span>Progress</span>
-                  <strong>
-                    Question {Math.max(questionNumber, 1)} / {TOTAL_QUESTIONS}
-                  </strong>
-                  <div className="progress-track" aria-hidden="true">
-                    <div className="progress-bar" style={{ width: `${progressPercent}%` }} />
+                {selectedCandidate ? (
+                  <div className="selected-summary">
+                    Selected: {selectedCandidate.member.name} · {selectedCandidate.member.jobRole}
                   </div>
-                </div>
-
-                <div className="sidebar-stat">
-                  <span>Completed Curriculum</span>
-                  <div className="day-chip-grid">
-                    {coveredDays.map((day) => (
-                      <span className="day-chip" key={day}>
-                        Day {day}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="sidebar-stat sidebar-stat--status">
-                  <span>Status</span>
-                  <strong>Interview in progress</strong>
-                </div>
+                ) : (
+                  <div className="selected-summary selected-summary--muted">Select one candidate to continue.</div>
+                )}
               </div>
-            </aside>
-
-            <section className="panel conversation-panel">
-              <div className="panel-heading panel-heading--split">
-                <div>
-                  <span className="panel-kicker">AI INTERVIEWER</span>
-                  <h2>{currentQuestion ? 'Current question' : 'Awaiting interview launch'}</h2>
-                </div>
-                <div className="live-indicator">
-                  <span className="live-indicator__dot" />
-                  Adaptive session active
-                </div>
-              </div>
-
-              <div className="conversation-stream" aria-live="polite">
-                {messages.map((message, index) => {
-                  const isLatestInterviewer = message.role === 'interviewer' && index === messages.length - 1
-
-                  return (
-                    <article
-                      key={message.id}
-                      className={`message message--${message.role} ${isLatestInterviewer ? 'message--current' : ''}`}
-                    >
-                      <div className="message__label">
-                        {message.role === 'interviewer' ? 'AI INTERVIEWER' : 'CANDIDATE'}
-                      </div>
-                      <p>{message.text}</p>
-                    </article>
-                  )
-                })}
-
-                {isSubmitting ? (
-                  <article className="message message--interviewer message--thinking">
-                    <div className="message__label">AI INTERVIEWER</div>
-                    <div className="typing-indicator" aria-label="AI is thinking">
-                      <span />
-                      <span />
-                      <span />
-                    </div>
-                    <p>AI is thinking...</p>
-                  </article>
-                ) : null}
-
-                <div ref={conversationEndRef} />
-              </div>
-
-              <form className="answer-form" onSubmit={handleSubmit}>
-                <label className="answer-form__label" htmlFor="candidate-answer">
-                  Candidate answer
-                </label>
-                <textarea
-                  id="candidate-answer"
-                  ref={textareaRef}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Explain your reasoning, architecture, trade-offs, and decisions..."
-                  rows={7}
-                  disabled={isSubmitting}
-                />
-                <div className="answer-form__footer">
-                  <span className="answer-form__hint">Press submit to send the answer to the live interview engine.</span>
-                  <button className="primary-button" type="submit" disabled={isSubmitting || !draft.trim()}>
-                    {isSubmitting ? 'Submitting...' : 'Submit Answer →'}
-                  </button>
-                </div>
-              </form>
             </section>
-
-            <aside className="panel signals-panel">
-              <div className="panel-heading">INTERVIEW SIGNALS</div>
-
-              <div className="signal-list">
-                <div className="signal-row">
-                  <span>Current question</span>
-                  <strong>{currentQuestion || 'Adaptive analysis active'}</strong>
-                </div>
-                <div className="signal-row">
-                  <span>Interview status</span>
-                  <strong>{interviewStatus}</strong>
-                </div>
-                <div className="signal-row">
-                  <span>Question number</span>
-                  <strong>
-                    {Math.max(questionNumber, 1)} / {TOTAL_QUESTIONS}
-                  </strong>
-                </div>
-                <div className="signal-row">
-                  <span>Candidate role</span>
-                  <strong>{candidate.member.jobRole}</strong>
-                </div>
-                <div className="signal-row">
-                  <span>Session</span>
-                  <strong>{sessionId ? `${sessionId.slice(0, 18)}…` : 'Initializing…'}</strong>
-                </div>
-                <div className="signal-row signal-row--placeholder">
-                  <span>Analysis layer</span>
-                  <strong>Adaptive analysis active</strong>
-                </div>
-              </div>
-            </aside>
           </section>
         ) : null}
 
-        {view === 'results' ? (
-          <section className="results-layout">
-            <div className="panel results-hero">
-              <div className="completion-badge">
-                <span className="completion-badge__ring" />
-                <span>INTERVIEW COMPLETE</span>
-              </div>
-              <h1>Interview completed for {candidate.member.name}.</h1>
-              <p className="results-summary">{feedback?.summary}</p>
-
-              <div className="evidence-grid">
-                <div className="evidence-card">
-                  <span>Questions answered</span>
-                  <strong>{transcriptCount}</strong>
-                </div>
-                <div className="evidence-card">
-                  <span>Interview completed</span>
-                  <strong>Yes</strong>
-                </div>
-                <div className="evidence-card">
-                  <span>Candidate role</span>
-                  <strong>{candidate.member.jobRole}</strong>
-                </div>
-              </div>
-
-              <button className="primary-button primary-button--wide" onClick={resetAndLaunch}>
-                Start New Interview
+        {view === 'interview' && activeCandidate ? (
+          <section className="interview-shell">
+            <header className="interview-header panel panel--compact">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setShowExitDialog(true)}
+                aria-label="Exit interview"
+              >
+                ← Exit interview
               </button>
-            </div>
 
-            <div className="results-columns">
-              <section className="panel feedback-panel">
-                <div className="panel-heading">STRENGTHS</div>
-                <div className="list-grid">
-                  {strengthItems.length ? (
-                    strengthItems.map((item, index) => (
-                      <article className="list-card list-card--success" key={`strength-${index}`}>
-                        {item}
-                      </article>
-                    ))
-                  ) : (
-                    <div className="empty-state">No strengths were returned by the backend.</div>
-                  )}
+              <div className="interview-header__center">
+                <div className="app-header__brand">INTERVIEWOS</div>
+                <div className="interview-header__title">
+                  Technical Interview · {activeCandidate.member.name} · {activeCandidate.member.jobRole}
                 </div>
-              </section>
+              </div>
 
-              <section className="panel feedback-panel">
-                <div className="panel-heading">DEVELOPMENT GAPS</div>
-                <div className="list-grid">
-                  {gapItems.length ? (
-                    gapItems.map((item, index) => (
-                      <article className="list-card list-card--gap" key={`gap-${index}`}>
-                        {item}
-                      </article>
-                    ))
-                  ) : (
-                    <div className="empty-state">No development gaps were returned by the backend.</div>
-                  )}
+              <div className="interview-header__status">
+                <div className="status-pill status-pill--live">● Live</div>
+                <div className="question-counter">
+                  Question {questionNumber} of {TOTAL_QUESTIONS}
                 </div>
-              </section>
+              </div>
+            </header>
 
-              <section className="panel feedback-panel">
-                <div className="panel-heading">NEXT STEPS</div>
-                <div className="list-grid">
-                  {nextItems.length ? (
-                    nextItems.map((item, index) => (
-                      <article className="list-card list-card--next" key={`next-${index}`}>
-                        {item}
-                      </article>
-                    ))
+            <div className="interview-layout">
+              <main className="interview-main">
+                <section className="panel panel--compact candidate-summary">
+                  <div className="section-kicker">Candidate</div>
+                  <h1>{activeCandidate.member.name}</h1>
+                  <p>{activeCandidate.member.jobRole}</p>
+                </section>
+
+                <section className="panel panel--compact question-panel" aria-live="polite">
+                  {isSubmitting ? (
+                    <div className="question-panel__loading">
+                      <div className="loading-spinner" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                      <div>
+                        <div className="question-panel__loading-title">Analyzing response...</div>
+                        <div className="question-panel__loading-subtitle">Generating next question...</div>
+                      </div>
+                    </div>
                   ) : (
-                    <div className="empty-state">No next steps were returned by the backend.</div>
+                    <>
+                      <div className="section-kicker">Current question</div>
+                      <div className="question-panel__question">{currentQuestion}</div>
+                    </>
                   )}
+                </section>
+
+                <section className="panel panel--compact response-panel">
+                  <form onSubmit={handleSubmit}>
+                    <label className="field-label" htmlFor="candidate-response">
+                      Candidate response
+                    </label>
+                    <textarea
+                      id="candidate-response"
+                      ref={textareaRef}
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                      placeholder="Explain your reasoning, architecture, trade-offs, and decisions..."
+                      rows={8}
+                      disabled={isSubmitting}
+                    />
+                    <div className="response-actions">
+                      <button className="button button--primary" type="submit" disabled={isSubmitting || !draft.trim()}>
+                        {isSubmitting ? 'Submitting...' : 'Submit answer'}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+
+                <Transcript messages={messages} />
+              </main>
+
+              <aside className="interview-sidebar panel panel--compact">
+                <div className="sidebar-block">
+                  <div className="section-kicker">Interview</div>
+                  <div className="sidebar-metric">
+                    <span>Question</span>
+                    <strong>
+                      {questionNumber} / {TOTAL_QUESTIONS}
+                    </strong>
+                  </div>
+                  <ProgressIndicator questionNumber={questionNumber} totalQuestions={TOTAL_QUESTIONS} compact />
                 </div>
-              </section>
+
+                <div className="sidebar-block">
+                  <div className="section-kicker">Candidate</div>
+                  <div className="sidebar-text strong">{activeCandidate.member.jobRole}</div>
+                  <div className="sidebar-text">{getCandidateMeta(activeCandidate)}</div>
+                </div>
+
+                <div className="sidebar-block">
+                  <div className="section-kicker">Curriculum</div>
+                  <div className="sidebar-text strong">{milestonesCount} completed milestones</div>
+                  {completedTopics.length ? (
+                    <ul className="sidebar-list">
+                      {completedTopics.map((topic) => (
+                        <li key={topic}>{topic}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+
+                <div className="sidebar-block">
+                  <div className="section-kicker">Session</div>
+                  <div className="sidebar-text strong">{sessionId ? `${sessionId.slice(0, 16)}…` : 'Initializing…'}</div>
+                  <div className="sidebar-text">Adaptive session active</div>
+                </div>
+              </aside>
             </div>
           </section>
         ) : null}
       </main>
+
+      <ExitDialog open={showExitDialog} onStay={() => setShowExitDialog(false)} onExit={() => resetToSelection()} />
     </div>
   )
 }
