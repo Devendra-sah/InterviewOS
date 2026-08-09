@@ -127,8 +127,6 @@ function App() {
   const progressPercent = Math.round((progressValue / TOTAL_QUESTIONS) * 100)
   const interviewStatus =
     view === 'results' ? 'Interview complete' : isSubmitting ? 'AI is thinking...' : 'Interview in progress'
-  const currentTopic = currentQuestion || 'Technical Deep Dive'
-
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, isSubmitting, view])
@@ -420,11 +418,6 @@ function App() {
                   <span className="live-indicator__dot" />
                   Adaptive session active
                 </div>
-              </div>
-
-              <div className="question-card">
-                <div className="question-card__label">Current topic</div>
-                <p>{currentTopic}</p>
               </div>
 
               <div className="conversation-stream" aria-live="polite">
